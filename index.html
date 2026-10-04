@@ -568,11 +568,11 @@ function getTotalPassed(u) {
   } else {
     // Doosre students — Firestore cache use karo (real data!)
     if (allScoresCache && allScoresCache[u] !== undefined) return allScoresCache[u];
-    // Fallback: agar cache nahi hai toh seed se simulate karo
-    const seed = parseInt(u.split("-")[1]) || 1000;
-    return (seed * 7) % 24;
+    // Real score: agar student ne abhi tak kuch nahi kiya toh 0
+    return 0;
   }
 }
+
 
 
 // XP Level system
