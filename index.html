@@ -1193,14 +1193,86 @@ async function leaderboard() {
   </div>`;
   await loadAllScores();
 
-  const students = getScores();
-  students.sort((a, b) => b.xp - a.xp || b.passed - a.passed);
+  const allStudents = getScores();
+  // Sirf woh students dikhao jinhone kam az kam 1 quiz pass kiya ho (XP > 0)
+  const activeStudents = allStudents.filter(s => s.xp > 0);
+  activeStudents.sort((a, b) => b.xp - a.xp || b.passed - a.passed);
 
-  const top1 = students[0] || { name: "-", xp: 0, passed: 0 };
-  const top2 = students[1] || { name: "-", xp: 0, passed: 0 };
-  const top3 = students[2] || { name: "-", xp: 0, passed: 0 };
-  const myRank = students.findIndex(s => s.isMe) + 1;
-  const me = students.find(s => s.isMe);
+  const me = allStudents.find(s => s.isMe) || { xp: 0, passed: 0 };
+  const myRank = me.xp > 0 ? (activeStudents.findIndex(s => s.isMe) + 1) : "-";
+
+  const top1 = activeStudents[0];
+  const top2 = activeStudents[1];
+  const top3 = activeStudents[2];
+
+  let podiumHtml = "";
+  if (activeStudents.length > 0) {
+    podiumHtml = `
+      <div class="podium">
+        <div class="podium-card second">
+          <div class="podium-badge">🥈</div>
+          <h3 style="margin:4px 0">${top2 ? esc(top2.name) : "—"}</h3>
+          <div class="mute">${top2 ? top2.passed + " videos passed" : "No score yet"}</div>
+          <div class="xp-badge" style="margin-top:8px">⚡ ${top2 ? top2.xp : 0} XP</div>
+        </div>
+        <div class="podium-card first">
+          <div class="podium-badge">🥇</div>
+          <h3 style="margin:4px 0">${top1 ? esc(top1.name) : "—"}</h3>
+          <div class="mute">${top1 ? top1.passed + " videos passed" : "No score yet"}</div>
+          <div class="xp-badge" style="margin-top:8px">⚡ ${top1 ? top1.xp : 0} XP</div>
+        </div>
+        <div class="podium-card third">
+          <div class="podium-badge">🥉</div>
+          <h3 style="margin:4px 0">${top3 ? esc(top3.name) : "—"}</h3>
+          <div class="mute">${top3 ? top3.passed + " videos passed" : "No score yet"}</div>
+          <div class="xp-badge" style="margin-top:8px">⚡ ${top3 ? top3.xp : 0} XP</div>
+        </div>
+      </div>
+    `;
+  }
+
+  let tableHtml = "";
+  if (activeStudents.length === 0) {
+    tableHtml = `
+      <div style="text-align:center;padding:48px 20px;background:var(--panel);border:1px dashed var(--line);border-radius:16px;margin:24px 0">
+        <div style="font-size:40px;margin-bottom:10px">🏁</div>
+        <h3 style="margin:0 0 6px">No one has earned XP yet!</h3>
+        <p class="mute" style="margin:0">Watch a video, pass a quiz, and be the first to take the #1 spot on the leaderboard!</p>
+      </div>
+    `;
+  } else {
+    tableHtml = `
+      <h2>Full Class Standings</h2>
+      <table class="lb-table">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Student</th>
+            <th>Student ID</th>
+            <th>Videos Passed</th>
+            <th>XP Points</th>
+            <th>Badge</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${activeStudents.map((s, idx) => {
+            const rank = idx + 1;
+            const badge = rank <= 3 ? "Champion 👑" : rank <= 10 ? "Top 10 ⭐" : rank <= 25 ? "Rising Star 🚀" : "Learner 📚";
+            return `
+              <tr class="lb-row ${s.isMe ? "me" : ""}">
+                <td><b>#${rank}</b></td>
+                <td><b>${esc(s.name)}</b> ${s.isMe ? '<span style="color:var(--pri2);font-weight:700">(You)</span>' : ''}</td>
+                <td class="mute">${s.id}</td>
+                <td>${s.passed} lessons</td>
+                <td><span class="xp-badge">⚡ ${s.xp} XP</span></td>
+                <td><span class="mute">${badge}</span></td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+  }
 
   $("#main").innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px">
@@ -1210,7 +1282,7 @@ async function leaderboard() {
       </div>
       <div class="stat" style="padding:10px 18px">
         <span class="mute" style="font-size:12px">Your Ranking:</span>
-        <b style="font-size:22px;color:var(--pri2)">#${myRank} of ${students.length}</b>
+        <b style="font-size:22px;color:var(--pri2)">${myRank !== "-" ? "#" + myRank : "Unranked"}</b>
       </div>
     </div>
 
@@ -1219,56 +1291,8 @@ async function leaderboard() {
       <b>⚡ ${me.xp} XP</b> <span class="mute">· ${me.passed} lesson(s) passed</span>
     </div>
 
-    <div class="podium">
-      <div class="podium-card second">
-        <div class="podium-badge">🥈</div>
-        <h3 style="margin:4px 0">${esc(top2.name)}</h3>
-        <div class="mute">${top2.passed} videos passed</div>
-        <div class="xp-badge" style="margin-top:8px">⚡ ${top2.xp} XP</div>
-      </div>
-      <div class="podium-card first">
-        <div class="podium-badge">🥇</div>
-        <h3 style="margin:4px 0">${esc(top1.name)}</h3>
-        <div class="mute">${top1.passed} videos passed</div>
-        <div class="xp-badge" style="margin-top:8px">⚡ ${top1.xp} XP</div>
-      </div>
-      <div class="podium-card third">
-        <div class="podium-badge">🥉</div>
-        <h3 style="margin:4px 0">${esc(top3.name)}</h3>
-        <div class="mute">${top3.passed} videos passed</div>
-        <div class="xp-badge" style="margin-top:8px">⚡ ${top3.xp} XP</div>
-      </div>
-    </div>
-
-    <h2>Full Class Standings</h2>
-    <table class="lb-table">
-      <thead>
-        <tr>
-          <th>Rank</th>
-          <th>Student</th>
-          <th>Student ID</th>
-          <th>Videos Passed</th>
-          <th>XP Points</th>
-          <th>Badge</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${students.map((s, idx) => {
-          const rank = idx + 1;
-          const badge = rank <= 3 ? "Champion 👑" : rank <= 10 ? "Top 10 ⭐" : rank <= 25 ? "Rising Star 🚀" : "Learner 📚";
-          return `
-            <tr class="lb-row ${s.isMe ? "me" : ""}">
-              <td><b>#${rank}</b></td>
-              <td><b>${esc(s.name)}</b> ${s.isMe ? '<span style="color:var(--pri2);font-weight:700">(You)</span>' : ''}</td>
-              <td class="mute">${s.id}</td>
-              <td>${s.passed} lessons</td>
-              <td><span class="xp-badge">⚡ ${s.xp} XP</span></td>
-              <td><span class="mute">${badge}</span></td>
-            </tr>
-          `;
-        }).join("")}
-      </tbody>
-    </table>
+    ${podiumHtml}
+    ${tableHtml}
   `;
 }
 
