@@ -1,0 +1,19 @@
+# Sensitive credentials & plain-text passwords (DO NOT PUSH TO GITHUB)
+*.csv
+*credentials*
+students_credentials.txt
+students_credentials.csv
+files (3)/students_credentials.txt
+files (3)/students_credentials.csv
+
+# Redundant duplicate download folder
+files (3)/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
