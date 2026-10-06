@@ -90,12 +90,12 @@
     const isLastLesson = lessonIndex === course.v.length - 1;
     const progress = Store.getProgress();
     const currentDone = progress[course.id] || 0;
+    const quizTicket = Store.issueQuizTicket(course.id, lessonIndex);
 
     // Handle lessons without questions
     if (!rawQuestions.length) {
       if (currentDone === lessonIndex) {
-        progress[course.id] = lessonIndex + 1;
-        Store.saveProgress(progress);
+        Store.recordLessonPassed(course.id, lessonIndex, quizTicket);
         if (onUpdateXP) onUpdateXP();
       }
       container.innerHTML = `
@@ -196,14 +196,9 @@
       if (passed) {
         launchConfetti();
 
-        // Strictly sequential lesson unlock
-        const curProgress = Store.getProgress();
-        const curDone = curProgress[course.id] || 0;
-        if (curDone === lessonIndex) {
-          curProgress[course.id] = lessonIndex + 1;
-          Store.saveProgress(curProgress);
-          if (onUpdateXP) onUpdateXP();
-        }
+        // Strictly sequential lesson unlock via verified anti-cheat recorder
+        Store.recordLessonPassed(course.id, lessonIndex, quizTicket);
+        if (onUpdateXP) onUpdateXP();
 
         const currentUser = Auth.getCurrentUser();
         const score = Store.getUserScore(currentUser ? currentUser.id : null);

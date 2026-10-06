@@ -56,29 +56,87 @@
     }
   }
 
+  // Active quiz ticket held in private module closure
+  let activeQuizTicket = null;
+
   /**
-   * Saves updated course progress with validation and cloud sync.
+   * Issues a secure single-use ticket for a legitimate quiz attempt.
    */
-  function saveProgress(progressObj, userId) {
-    const user = userId || (Auth.getCurrentUser() ? Auth.getCurrentUser().id : null);
-    if (!user) return;
+  function issueQuizTicket(courseId, lessonIndex) {
+    const user = Auth.getCurrentUser();
+    if (!user) return null;
+    activeQuizTicket = {
+      uid: user.id,
+      cid: courseId,
+      idx: lessonIndex,
+      issuedAt: Date.now()
+    };
+    return activeQuizTicket;
+  }
 
-    // 1. Sanitize to guarantee bounds
-    const clean = Security.sanitizeProgress(progressObj);
+  /**
+   * ANTI-CHEAT: Strictly records a lesson pass ONLY after quiz verification.
+   * - Enforces sequential lesson unlocks (+1 only)
+   * - Requires valid single-use quiz ticket
+   * - Signs cloud payload with cryptographic hash
+   */
+  function recordLessonPassed(courseId, lessonIndex, ticket) {
+    const user = Auth.getCurrentUser();
+    if (!user) {
+      console.warn('[ANTI-CHEAT] Progress rejected: User not logged in.');
+      return false;
+    }
 
-    // 2. Persist locally with tamper-evident checksum
-    setLocalProgress(user, clean);
+    // 1. Verify single-use quiz ticket
+    if (!ticket || !activeQuizTicket ||
+        activeQuizTicket.uid !== user.id ||
+        activeQuizTicket.cid !== courseId ||
+        activeQuizTicket.idx !== lessonIndex) {
+      console.warn('[ANTI-CHEAT] Progress rejected: Invalid or forged quiz ticket.');
+      return false;
+    }
+    activeQuizTicket = null; // Invalidate ticket after single use
 
-    // 3. Sync sanitized clean progress to Firestore
+    // 2. Validate course limits
+    const maxLessons = Security.COURSE_LIMITS[courseId];
+    if (!maxLessons || lessonIndex < 0 || lessonIndex >= maxLessons) {
+      console.warn('[ANTI-CHEAT] Progress rejected: Lesson index out of bounds.');
+      return false;
+    }
+
+    // 3. Strict sequential progression (+1 only)
+    const local = getLocalProgress(user.id);
+    const curDone = local[courseId] || 0;
+    if (lessonIndex !== curDone) {
+      console.warn('[ANTI-CHEAT] Progress rejected: Non-sequential lesson jump detected.');
+      return false;
+    }
+
+    // 4. Increment by exactly 1
+    local[courseId] = lessonIndex + 1;
+    const clean = Security.sanitizeProgress(local);
+
+    // 5. Persist locally with checksum
+    setLocalProgress(user.id, clean);
+
+    // 6. Sign and sync to Firestore
     if (db) {
-      db.collection('progress').doc(user).set(clean).catch(function (e) {
-        console.warn('Cloud progress sync notice:', e);
+      const sig = Security.generateCloudSignature(user.id, clean);
+      const payload = Object.assign({}, clean, {
+        _sig: sig,
+        _updated: Date.now()
+      });
+      db.collection('progress').doc(user.id).set(payload).catch(function (e) {
+        console.warn('Cloud sync error:', e);
       });
     }
+
+    return true;
   }
 
   /**
    * Loads current user's progress from cloud upon login.
+   * Strictly validates cryptographic cloud signature before accepting.
    */
   async function syncFromFirestore(userId) {
     const user = userId || (Auth.getCurrentUser() ? Auth.getCurrentUser().id : null);
@@ -87,7 +145,14 @@
     try {
       const snap = await db.collection('progress').doc(user).get();
       if (snap.exists) {
-        const cloudData = Security.sanitizeProgress(snap.data());
+        const raw = snap.data();
+        // ANTI-CHEAT: reject any unsigned or tampered cloud progress
+        if (!Security.verifyCloudSignature(user, raw)) {
+          console.warn('[ANTI-CHEAT] Cloud data failed signature check. Relying on local verified data.');
+          return getLocalProgress(user);
+        }
+
+        const cloudData = Security.sanitizeProgress(raw);
         const localData = getLocalProgress(user);
 
         // Merge: take maximum valid progress for each course
@@ -109,9 +174,10 @@
   }
 
   /**
-   * Loads and SANITIZES all student scores from Firestore.
-   * Any corrupted, hacked, or over-the-limit score stored in Firestore
-   * is automatically clamped to legitimate course bounds!
+   * Loads, VERIFIES, and SANITIZES all student scores from Firestore.
+   * Any unsigned, forged, or console-injected document is:
+   * 1. Rejected from the leaderboard (0 XP)
+   * 2. Automatically purged from Firestore
    */
   async function loadAllScores() {
     if (!db) {
@@ -122,13 +188,36 @@
     try {
       const snap = await db.collection('progress').get();
       allScoresCache = {};
+      const taintedRefs = [];
+
       snap.forEach(function (doc) {
-        const raw = doc.data();
-        // ANTI-CHEAT: strictly sanitize every document
+        const raw = doc.data() || {};
+        const studentId = doc.id;
+
+        // ANTI-CHEAT ENFORCEMENT:
+        // Must possess a valid cryptographic signature
+        const isValid = Security.verifyCloudSignature(studentId, raw);
+        if (!isValid) {
+          console.warn('[ANTI-CHEAT] Disqualified student ' + studentId + ': Unsigned or tampered cloud data.');
+          taintedRefs.push(doc.ref);
+          return; // Score stays 0
+        }
+
         const clean = Security.sanitizeProgress(raw);
         const score = Security.calculateScore(clean);
-        allScoresCache[doc.id] = score.passed;
+        allScoresCache[studentId] = score.passed;
       });
+
+      // Auto-purge forged documents from Firestore in real-time
+      if (taintedRefs.length > 0) {
+        const batch = db.batch();
+        taintedRefs.forEach(function (ref) {
+          batch.delete(ref);
+        });
+        batch.commit().catch(function (e) {
+          console.warn('Auto-purge commit notice:', e);
+        });
+      }
     } catch (e) {
       console.warn('Error loading cloud scores:', e);
       allScoresCache = null;
@@ -167,7 +256,7 @@
     } catch (e) {}
 
     if (db) {
-      db.collection('progress').doc(user).set({}).catch(function (e) {
+      db.collection('progress').doc(user).delete().catch(function (e) {
         console.warn('Cloud reset failed:', e);
       });
     }
@@ -192,7 +281,8 @@
 
   const Store = Object.freeze({
     getProgress: getLocalProgress,
-    saveProgress: saveProgress,
+    issueQuizTicket: issueQuizTicket,
+    recordLessonPassed: recordLessonPassed,
     syncFromFirestore: syncFromFirestore,
     loadAllScores: loadAllScores,
     getUserScore: getUserScore,

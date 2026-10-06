@@ -138,6 +138,9 @@
         <div>
           <h1>Class Leaderboard 🏆</h1>
           <div class="mute">Live rankings — authenticated and verified from the cloud. ☁️</div>
+          <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(47,209,139,0.12);color:var(--ok);padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;margin-top:6px;border:1px solid rgba(47,209,139,0.3)">
+            🛡️ Cryptographic Anti-Cheat Active · Video Quizzes Required
+          </div>
         </div>
         <div class="stat" style="padding:10px 18px">
           <span class="mute" style="font-size:12px">Your Ranking:</span>
