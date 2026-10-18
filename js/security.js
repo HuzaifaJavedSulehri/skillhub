@@ -244,5 +244,13 @@
     verifyCloudSignature
   });
 
-  global.Security = Security;
+  try {
+    Object.defineProperty(global, 'Security', {
+      value: Security,
+      writable: false,
+      configurable: false
+    });
+  } catch (e) {
+    global.Security = Security;
+  }
 })(window);

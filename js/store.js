@@ -290,5 +290,13 @@
     resetAllLeaderboardData: resetAllLeaderboardData
   });
 
-  global.Store = Store;
+  try {
+    Object.defineProperty(global, 'Store', {
+      value: Store,
+      writable: false,
+      configurable: false
+    });
+  } catch (e) {
+    global.Store = Store;
+  }
 })(window);

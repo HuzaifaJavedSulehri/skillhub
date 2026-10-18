@@ -162,5 +162,13 @@
     render: renderLeaderboard
   });
 
-  global.Leaderboard = Leaderboard;
+  try {
+    Object.defineProperty(global, 'Leaderboard', {
+      value: Leaderboard,
+      writable: false,
+      configurable: false
+    });
+  } catch (e) {
+    global.Leaderboard = Leaderboard;
+  }
 })(window);

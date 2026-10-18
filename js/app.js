@@ -986,8 +986,17 @@ if (await student.passQuiz()) {
   const App = Object.freeze({
     boot: boot,
     navigate: navigate,
-    showLoveToken: showLoveTokenPopup
+    showLoveToken: showLoveTokenPopup,
+    getCurCourse: () => curCourse
   });
 
-  global.App = App;
+  try {
+    Object.defineProperty(global, 'App', {
+      value: App,
+      writable: false,
+      configurable: false
+    });
+  } catch (e) {
+    global.App = App;
+  }
 })(window);

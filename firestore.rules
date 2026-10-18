@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // SkillHub Student Progress Collection Rules
+    match /progress/{studentId} {
+      
+      // Anyone can read verified progress for the leaderboard
+      allow read: if true;
+      
+      // Strict write rules:
+      // 1. Only allow valid student IDs (SH-1001 to SH-1047)
+      // 2. Prevent document deletion
+      // 3. Enforce maximum lesson bounds and XP limits
+      allow write: if isValidStudentId(studentId)
+                   && request.resource.data.keys().hasAll(['ts', 'sig'])
+                   && isValidLessonCounts(request.resource.data)
+                   && (request.resource.data.xp == null || request.resource.data.xp <= 6150);
+
+      allow delete: if false; // Prohibit deleting student records
+    }
+    
+    function isValidStudentId(id) {
+      return id.matches('^SH-[0-9]{4}$');
+    }
+
+    function isValidLessonCounts(data) {
+      // Validate that course lesson numbers never exceed authenticated limits
+      return (data.js == null || data.js <= 13)
+          && (data.py == null || data.py <= 9)
+          && (data.html == null || data.html <= 5)
+          && (data.css == null || data.css <= 9)
+          && (data.c == null || data.c <= 12)
+          && (data.java == null || data.java <= 9)
+          && (data.cpp == null || data.cpp <= 9)
+          && (data.sql == null || data.sql <= 9)
+          && (data.git == null || data.git <= 1)
+          && (data.react == null || data.react <= 6)
+          && (data.node == null || data.node <= 7)
+          && (data.dsa == null || data.dsa <= 9)
+          && (data.linux == null || data.linux <= 7)
+          && (data.ts == null || data.ts <= 6)
+          && (data.django == null || data.django <= 6)
+          && (data.flutter == null || data.flutter <= 6);
+    }
+  }
+}

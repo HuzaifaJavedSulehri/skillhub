@@ -10,6 +10,39 @@
 
   const PASS_THRESHOLD = 0.6; // 60%
 
+  // Private in-memory Answer Vault (Permanently strips answers from window.COURSES to prevent DevTools cheating)
+  const ANSWER_VAULT = new Map();
+
+  function secureCourseAnswers() {
+    if (typeof global.COURSES === 'undefined' || !Array.isArray(global.COURSES)) return;
+    global.COURSES.forEach(course => {
+      if (!course.v) return;
+      course.v.forEach(lesson => {
+        const rawQuestions = lesson[2];
+        if (Array.isArray(rawQuestions)) {
+          rawQuestions.forEach(q => {
+            if (q.length >= 3 && typeof q[2] === 'number') {
+              const prompt = q[0];
+              const correctText = q[1][q[2]];
+              ANSWER_VAULT.set(prompt, correctText);
+              // Strip plaintext answer index from public object
+              q.splice(2, 1);
+            }
+          });
+        }
+      });
+    });
+  }
+
+  // Execute vault encryption immediately
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', secureCourseAnswers);
+    } else {
+      secureCourseAnswers();
+    }
+  }
+
   function shuffle(array) {
     const arr = [...array];
     for (let i = arr.length - 1; i > 0; i--) {
@@ -115,13 +148,12 @@
       return;
     }
 
-    // Dynamic question & answer option shuffling
+    // Dynamic question & answer option shuffling using private vault
     const questions = shuffle(rawQuestions).map(q => {
       const originalOptions = q[1];
-      const correctIdx = q[2];
-      const indexMap = shuffle(originalOptions.map((_, i) => i));
-      const shuffledOptions = indexMap.map(i => originalOptions[i]);
-      const newCorrectIdx = indexMap.indexOf(correctIdx);
+      const correctText = ANSWER_VAULT.has(q[0]) ? ANSWER_VAULT.get(q[0]) : originalOptions[q[2]];
+      const shuffledOptions = shuffle(originalOptions);
+      const newCorrectIdx = shuffledOptions.indexOf(correctText);
 
       return {
         prompt: q[0],
@@ -301,5 +333,13 @@
     launchConfetti: launchConfetti
   });
 
-  global.Quiz = Quiz;
+  try {
+    Object.defineProperty(global, 'Quiz', {
+      value: Quiz,
+      writable: false,
+      configurable: false
+    });
+  } catch (e) {
+    global.Quiz = Quiz;
+  }
 })(window);

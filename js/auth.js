@@ -140,12 +140,29 @@
   });
 
   const SESSION_STORAGE_KEY = 'sh_user';
+  const SESSION_TOKEN_KEY = 'sh_user_token';
+  const TOKEN_SALT = 'SkillHub_Session_Integrity_Token_Salt_2026';
+
+  // In-memory rate limiting against brute-force login attempts
+  let failedAttempts = 0;
+  let lockoutUntil = 0;
+
+  function generateSessionToken(id, hash) {
+    return sha256(id + ':' + hash + ':' + SALT + ':' + TOKEN_SALT);
+  }
 
   /**
    * Attempts login with student ID and password.
    * Compares cryptographic hashes instead of plaintext passwords.
+   * Includes rate limiting and cryptographically signed session tokens.
    */
   function login(studentId, password) {
+    const now = Date.now();
+    if (now < lockoutUntil) {
+      const waitSec = Math.ceil((lockoutUntil - now) / 1000);
+      return { success: false, message: `Too many failed attempts. Please wait ${waitSec} seconds.` };
+    }
+
     if (!studentId || !password) {
       return { success: false, message: 'Please enter both Student ID and password.' };
     }
@@ -155,13 +172,24 @@
 
     const studentRecord = ENROLLED_STUDENTS[cleanId];
     if (!studentRecord) {
+      failedAttempts++;
+      if (failedAttempts >= 5) {
+        lockoutUntil = Date.now() + 30000; // 30 second cooldown
+        failedAttempts = 0;
+      }
       return { success: false, message: 'Invalid Student ID or password. Check credentials.' };
     }
 
     const computedHash = sha256(cleanPw + SALT);
     if (computedHash === studentRecord.hash) {
+      // Reset rate limiting counter on success
+      failedAttempts = 0;
+      lockoutUntil = 0;
+
       try {
+        const token = generateSessionToken(cleanId, studentRecord.hash);
         localStorage.setItem(SESSION_STORAGE_KEY, cleanId);
+        localStorage.setItem(SESSION_TOKEN_KEY, token);
       } catch (e) {
         console.warn('LocalStorage unavailable for session storage');
       }
@@ -174,23 +202,43 @@
       };
     }
 
+    failedAttempts++;
+    if (failedAttempts >= 5) {
+      lockoutUntil = Date.now() + 30000;
+      failedAttempts = 0;
+    }
+
     return { success: false, message: 'Invalid Student ID or password. Check credentials.' };
   }
 
   function logout() {
     try {
       localStorage.removeItem(SESSION_STORAGE_KEY);
+      localStorage.removeItem(SESSION_TOKEN_KEY);
     } catch (e) {}
   }
 
+  /**
+   * Cryptographically validates session token before returning current user.
+   * Prevents console injection of 'sh_user'.
+   */
   function getCurrentUser() {
     try {
       const id = localStorage.getItem(SESSION_STORAGE_KEY);
-      if (id && ENROLLED_STUDENTS[id]) {
-        return {
-          id: id,
-          name: ENROLLED_STUDENTS[id].name
-        };
+      const token = localStorage.getItem(SESSION_TOKEN_KEY);
+
+      if (id && token && ENROLLED_STUDENTS[id]) {
+        const expectedToken = generateSessionToken(id, ENROLLED_STUDENTS[id].hash);
+        // Strict cryptographic token equality check
+        if (token === expectedToken) {
+          return {
+            id: id,
+            name: ENROLLED_STUDENTS[id].name
+          };
+        } else {
+          console.warn('[SECURITY] Tampered or unsigned session detected. Terminating session.');
+          logout();
+        }
       }
     } catch (e) {}
     return null;
@@ -217,7 +265,7 @@
     });
   }
 
-  // Freeze public API to prevent runtime tampering via DevTools
+  // Freeze public API and lock global definition to prevent runtime tampering
   const Auth = Object.freeze({
     login,
     logout,
@@ -228,5 +276,13 @@
     getAllStudents
   });
 
-  global.Auth = Auth;
+  try {
+    Object.defineProperty(global, 'Auth', {
+      value: Auth,
+      writable: false,
+      configurable: false
+    });
+  } catch (e) {
+    global.Auth = Auth;
+  }
 })(window);
