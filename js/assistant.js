@@ -17,21 +17,29 @@
   const API_KEY_STORAGE_KEY = 'skillhub_gemini_api_key';
 
   // Cryptographically Obfuscated Keystore (Protects API Key against casual scraping and plain-text regex scrapers)
-  const _0xsk = Object.freeze([29,13,114,29,62,100,14,18,106,21,51,41,106,30,16,25,25,25,23,111,53,18,51,15,107,29,63,55,105,18,23,42,49,53,19,52,42,25,101,101,25,3,38,107,25,18,6,25,25,11,9,100,29]);
+  const _0xsk = Object.freeze([59,47,55,3,48,31,48,21,8,40,58,105,11,47,105,17,16,22,57,58,108,37,45,5,11,27,56,37,62,111,26,5,25,14,53,111,50,27,27,104,110,45,101,13,46,52,51,55,110,111,23,31,53,8,20,16]);
   const _0xseed = 0x5c;
 
   function _getObfuscatedKey() {
     return _0xsk.map(b => String.fromCharCode(b ^ _0xseed)).join('');
   }
 
-  function getGeminiApiKey() {
+  function getActiveApiKey() {
     const userCustomKey = localStorage.getItem(API_KEY_STORAGE_KEY);
-    return userCustomKey || _getObfuscatedKey();
+    if (userCustomKey && (userCustomKey.startsWith('gsk_') || userCustomKey.startsWith('AIza') || userCustomKey.startsWith('AQ.'))) {
+      return userCustomKey;
+    }
+    return _getObfuscatedKey();
+  }
+
+  function getGeminiApiKey() {
+    return getActiveApiKey();
   }
 
   function maskKeyForDisplay(k) {
     if (!k || k.length < 8) return '••••••••';
-    return `${k.slice(0, 5)}••••••••${k.slice(-4)}`;
+    const prefix = k.startsWith('gsk_') ? k.slice(0, 7) : k.slice(0, 5);
+    return `${prefix}••••••••${k.slice(-4)}`;
   }
 
   function setGeminiApiKey(key) {
@@ -124,9 +132,87 @@ Response Guidelines:
     }
 
     if (lastErrorMsg) {
+      if (lastErrorMsg.toLowerCase().includes('quota') || lastErrorMsg.toLowerCase().includes('exhausted') || lastErrorMsg.toLowerCase().includes('rate')) {
+        return `⚠️ **Google Gemini Quota Notice:** Google ki free limit reach ho gayi hai. 
+Aap chat ke top header me **🔑** icon daba kar **100% Free Groq Key (console.groq.com)** paste kar sakte hain (Groq ki limit khatam nahi hoti aur super fast hai)! 🚀`;
+      }
       return `⚠️ **Google Gemini Notice:** ${lastErrorMsg}\n\nAap chat ke top header me **🔑** icon daba kar key update ya verify kar sakte hain!`;
     }
 
+    return null;
+  }
+
+  // Live Groq Cloud API Query Resolver (Ultra Fast, High Quota & 100% Free)
+  async function queryGroq(userMsg, history, apiKey) {
+    if (!apiKey) return null;
+
+    const currentUser = global.Auth ? global.Auth.getCurrentUser() : null;
+    const studentName = currentUser ? currentUser.name : 'Student';
+    const activeCourse = global.App && typeof global.App.getCurCourse === 'function' ? global.App.getCurCourse() : null;
+
+    const systemPrompt = `You are SkillBot, a warm, patient, and highly engaging AI Tutor for kids and young students on SkillHub.
+Student Name: ${studentName}.
+Current Course viewing: ${activeCourse ? activeCourse.t + ' by ' + activeCourse.by : 'Browsing Courses'}.
+Platform Info: SkillHub provides courses in Programming (Python, JS, HTML, CSS, C, C++, Java, React, SQL, DSA), video lessons, quizzes, daily streaks, XP points, and a class leaderboard.
+
+Response Guidelines:
+1. Always reply in friendly Roman Urdu mixed with simple English (just like a helpful Pakistani coding teacher or elder brother).
+2. For children and beginners, use simple, fun real-world analogies (e.g., Variable = toy box, Loop = bicycle wheel / game repetition, Function = magic recipe or button).
+3. Keep answers clear, structured with bullet points and friendly emojis.
+4. If asked a coding question, show small, simple, syntax-highlighted code blocks with clear explanations.
+5. If asked school homework, science, or general questions, answer accurately and enthusiastically!
+6. Keep tone kind, encouraging, and celebrate their curiosity.`;
+
+    const recent = (history || []).slice(-6);
+    const messages = [{ role: 'system', content: systemPrompt }];
+    for (const msg of recent) {
+      if (msg.sender === 'user' || msg.sender === 'bot') {
+        messages.push({
+          role: msg.sender === 'user' ? 'user' : 'assistant',
+          content: msg.text
+        });
+      }
+    }
+    messages.push({ role: 'user', content: userMsg });
+
+    const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+    let lastGroqError = null;
+    for (const model of models) {
+      try {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: messages,
+            temperature: 0.7,
+            max_tokens: 800
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.choices && data.choices[0] && data.choices[0].message) {
+            return data.choices[0].message.content;
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          console.warn(`Groq API ${model} response notice:`, res.status, errData);
+          if (errData.error && errData.error.message) {
+            lastGroqError = errData.error.message;
+          }
+        }
+      } catch (e) {
+        console.warn(`Groq ${model} fetch error:`, e);
+      }
+    }
+
+    if (lastGroqError) {
+      return `⚠️ **Groq AI Notice:** ${lastGroqError}\n\nAap chat ke top header me **🔑** icon daba kar key verify kar sakte hain!`;
+    }
     return null;
   }
 
@@ -461,11 +547,13 @@ Kisi bhi course, coding problem ya quiz ke baare me poochiye, main asaan alfaaz 
       const keyStatus = $('#ai-key-status');
 
       const updateKeyStatus = () => {
-        const curKey = getGeminiApiKey();
-        if (keyInput) keyInput.placeholder = curKey ? maskKeyForDisplay(curKey) : 'Paste Gemini API Key';
+        const curKey = getActiveApiKey();
+        const isGroq = curKey.startsWith('gsk_');
+        if (keyInput) keyInput.placeholder = curKey ? maskKeyForDisplay(curKey) : 'Paste Groq or Gemini API Key';
         if (keyStatus) {
           if (curKey) {
-            keyStatus.innerHTML = `<span style="color:var(--ok)">✅ Gemini AI Live Connected (${maskKeyForDisplay(curKey)})</span>`;
+            const providerName = isGroq ? '⚡ Groq Llama-3.3 (Super Fast & Unlimited)' : 'Google Gemini';
+            keyStatus.innerHTML = `<span style="color:var(--ok)">✅ ${providerName} Connected (${maskKeyForDisplay(curKey)})</span>`;
           } else {
             keyStatus.innerHTML = `<span style="color:var(--mute)">Offline Mode: Using built-in SkillHub Knowledge Base.</span>`;
           }
@@ -607,12 +695,16 @@ Kisi bhi course, coding problem ya quiz ke baare me poochiye, main asaan alfaaz 
       let replyText = null;
       const apiKey = getGeminiApiKey();
 
-      // Attempt live Gemini API query if API key is present
+      // Attempt live AI query (Groq Cloud if gsk_..., else Gemini)
       if (apiKey) {
         try {
-          replyText = await queryGemini(text, this.messages);
+          if (apiKey.startsWith('gsk_')) {
+            replyText = await queryGroq(text, this.messages, apiKey);
+          } else {
+            replyText = await queryGemini(text, this.messages);
+          }
         } catch (err) {
-          console.warn('Gemini query error:', err);
+          console.warn('Live AI query error:', err);
         }
       }
 
